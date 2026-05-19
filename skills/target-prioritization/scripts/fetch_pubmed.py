@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""PubMed E-utilities fetcher: paper counts (total / IBD / T cells) + 5 most-recent IBD-related PMIDs."""
+"""PubMed E-utilities fetcher: total paper count + two configurable
+context counts (disease focus + cell / lineage focus) + 5 most-recent
+focus-disease PMIDs.
+
+Customize CONTEXTS for your project. Examples:
+  - Autoimmunity:  '... AND ("inflammatory bowel"[tiab] OR "Crohn"[tiab] OR "ulcerative colitis"[tiab])'
+  - Oncology:      '... AND ("cancer"[tiab] OR "tumor"[tiab] OR "neoplasm"[tiab])'
+  - Neurodegen:    '... AND ("Alzheimer"[tiab] OR "Parkinson"[tiab] OR "neurodegeneration"[tiab])'
+  - Cell context:  '"T cell"', '"macrophage"', '"hepatocyte"', '"neuron"', etc.
+"""
 import argparse
 import json
 import time
@@ -10,9 +19,9 @@ from pathlib import Path
 ESEARCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 
 CONTEXTS = {
-    "total":   '"{gene}"[tiab]',
-    "ibd":     '"{gene}"[tiab] AND ("inflammatory bowel disease"[tiab] OR "Crohn"[tiab] OR "ulcerative colitis"[tiab] OR ibd[tiab])',
-    "t_cells": '"{gene}"[tiab] AND ("T cell"[tiab] OR "T-cell"[tiab] OR "T lymphocyte"[tiab])',
+    "total":           '"{gene}"[tiab]',
+    "focus_disease":   '"{gene}"[tiab] AND ("inflammatory bowel disease"[tiab] OR "Crohn"[tiab] OR "ulcerative colitis"[tiab] OR ibd[tiab])',
+    "cell_context":    '"{gene}"[tiab] AND ("T cell"[tiab] OR "T-cell"[tiab] OR "T lymphocyte"[tiab])',
 }
 
 
@@ -30,22 +39,22 @@ def fetch_one(gene: str) -> dict:
     out = {
         "gene": gene,
         "pubmed_total": 0,
-        "pubmed_ibd": 0,
-        "pubmed_t_cells": 0,
+        "pubmed_focus_disease": 0,
+        "pubmed_cell_context": 0,
         "maturity_tag": None,
-        "recent_ibd_pmids": [],
+        "recent_focus_disease_pmids": [],
     }
     for key, tmpl in CONTEXTS.items():
         term = tmpl.format(gene=gene)
-        retmax = 5 if key == "ibd" else 0
+        retmax = 5 if key == "focus_disease" else 0
         data = esearch(term, retmax=retmax)
         try:
             count = int(data.get("esearchresult", {}).get("count", 0))
         except Exception:
             count = 0
         out[f"pubmed_{key}"] = count
-        if key == "ibd":
-            out["recent_ibd_pmids"] = data.get("esearchresult", {}).get("idlist", [])[:5]
+        if key == "focus_disease":
+            out["recent_focus_disease_pmids"] = data.get("esearchresult", {}).get("idlist", [])[:5]
         time.sleep(0.34)  # NCBI rate limit: 3/sec without API key
 
     total = out["pubmed_total"]

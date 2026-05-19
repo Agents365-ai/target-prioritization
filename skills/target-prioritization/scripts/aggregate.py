@@ -41,7 +41,8 @@ def clamp01(x: float) -> float:
     return 0.0 if x < 0 else (1.0 if x > 1 else x)
 
 
-IBD_TERMS = ("crohn", "ulcerative colitis", "inflammatory bowel", "ibd")
+# Override to retarget for your project — see fetch_opentargets.py for examples.
+FOCUS_DISEASE_TERMS = ("crohn", "ulcerative colitis", "inflammatory bowel", "ibd")
 
 
 def derive_disease_signal(ot_entry: dict) -> dict:
@@ -49,21 +50,21 @@ def derive_disease_signal(ot_entry: dict) -> dict:
     Replaces the dropped dedicated GWAS fetcher — OT integrates GWAS Catalog etc."""
     rows = ot_entry.get("associated_diseases_top5") or []
     any_assoc = bool(rows)
-    ibd_hits = []
-    max_ibd_score = 0.0
+    focus_hits = []
+    max_focus_score = 0.0
     max_any_score = 0.0
     for r in rows:
         name = (r.get("name") or "").lower()
         score = float(r.get("score") or 0)
         max_any_score = max(max_any_score, score)
-        if any(t in name for t in IBD_TERMS):
-            ibd_hits.append(r.get("name"))
-            max_ibd_score = max(max_ibd_score, score)
+        if any(t in name for t in FOCUS_DISEASE_TERMS):
+            focus_hits.append(r.get("name"))
+            max_focus_score = max(max_focus_score, score)
     return {
         "any_assoc": any_assoc,
-        "is_ibd_associated": bool(ibd_hits),
-        "ibd_hits": ibd_hits,
-        "max_ibd_score": max_ibd_score,
+        "is_focus_disease_associated": bool(focus_hits),
+        "focus_disease_hits": focus_hits,
+        "max_focus_disease_score": max_focus_score,
         "max_any_score": max_any_score,
     }
 
@@ -87,7 +88,7 @@ def compute_components(g: str, uniprot: dict, ot: dict, pubmed: dict,
         drug = max(drug, f.get("approved_drug_bonus", 0.7))
     phase = o.get("highest_clinical_phase", 0) or 0
     drug = max(drug, clamp01(phase / 4.0))
-    if o.get("any_ibd_drug"):
+    if o.get("any_focus_disease_drug"):
         drug = max(drug, 0.85)
     druggability = clamp01(drug)
 
@@ -95,8 +96,8 @@ def compute_components(g: str, uniprot: dict, ot: dict, pubmed: dict,
     g_score = 0.0
     if gw["any_assoc"]:
         g_score += 0.4 * gw["max_any_score"]
-    if gw["is_ibd_associated"]:
-        g_score += f.get("ibd_gwas_bonus", 0.5) + 0.2 * gw["max_ibd_score"]
+    if gw["is_focus_disease_associated"]:
+        g_score += f.get("focus_disease_assoc_bonus", 0.5) + 0.2 * gw["max_focus_disease_score"]
     disease_genetics = clamp01(g_score)
 
     # 4) tractability bonus
@@ -233,18 +234,18 @@ def main():
             "has_transmembrane": u.get("has_transmembrane"),
             "approved_drug_count": o.get("approved_drug_count", 0),
             "highest_clinical_phase": o.get("highest_clinical_phase", 0),
-            "any_ibd_drug": o.get("any_ibd_drug", False),
-            "ibd_drugs": "; ".join(o.get("ibd_drugs") or []),
+            "any_focus_disease_drug": o.get("any_focus_disease_drug", False),
+            "focus_disease_drugs": "; ".join(o.get("focus_disease_drugs") or []),
             "tractability_small_molecule": o.get("tractability_small_molecule"),
             "tractability_antibody": o.get("tractability_antibody"),
             "any_disease_assoc": gw["any_assoc"],
-            "is_ibd_associated": gw["is_ibd_associated"],
-            "ibd_traits": "; ".join(gw["ibd_hits"]),
-            "max_ibd_assoc_score": round(gw["max_ibd_score"], 3),
+            "is_focus_disease_associated": gw["is_focus_disease_associated"],
+            "focus_disease_traits": "; ".join(gw["focus_disease_hits"]),
+            "max_focus_disease_assoc_score": round(gw["max_focus_disease_score"], 3),
             "max_disease_assoc_score": round(gw["max_any_score"], 3),
             "pubmed_total": pm.get("pubmed_total", 0),
-            "pubmed_ibd": pm.get("pubmed_ibd", 0),
-            "pubmed_t_cells": pm.get("pubmed_t_cells", 0),
+            "pubmed_focus_disease": pm.get("pubmed_focus_disease", 0),
+            "pubmed_cell_context": pm.get("pubmed_cell_context", 0),
             "maturity_tag": pm.get("maturity_tag"),
             "n_supporting_de_files": ld.get("n_supporting_files", 0),
             "supporting_de_files": " | ".join((ld.get("supporting_files") or [])[:5]),
@@ -282,16 +283,16 @@ def main():
         md.append(f"| UniProt | {r['uniprot_id'] or '—'} — {r['protein_name'] or '—'} |")
         md.append(f"| Localization | {r['subcellular_location'] or '—'} |")
         md.append(f"| Surface / secreted / MHC | surf={r['is_surface']}  sec={r['is_secreted']}  mhc={r['is_mhc']}  TM={r['has_transmembrane']} |")
-        md.append(f"| Druggability | approved={r['approved_drug_count']}  max_phase={r['highest_clinical_phase']}  IBD_drug={r['any_ibd_drug']}  IBD_drugs={r['ibd_drugs'] or '—'} |")
+        md.append(f"| Druggability | approved={r['approved_drug_count']}  max_phase={r['highest_clinical_phase']}  focus_disease_drug={r['any_focus_disease_drug']}  focus_disease_drugs={r['focus_disease_drugs'] or '—'} |")
         md.append(f"| Tractability | sm_mol={r['tractability_small_molecule'] or '—'}  Ab={r['tractability_antibody'] or '—'} |")
-        md.append(f"| Disease assoc (OT) | any={r['any_disease_assoc']}  IBD={r['is_ibd_associated']}  IBD_traits={r['ibd_traits'] or '—'}  max_score={r['max_disease_assoc_score']} |")
-        md.append(f"| PubMed | total={r['pubmed_total']}  IBD={r['pubmed_ibd']}  T_cells={r['pubmed_t_cells']}  maturity={r['maturity_tag']} |")
+        md.append(f"| Disease assoc (OT) | any={r['any_disease_assoc']}  focus={r['is_focus_disease_associated']}  focus_traits={r['focus_disease_traits'] or '—'}  max_score={r['max_disease_assoc_score']} |")
+        md.append(f"| PubMed | total={r['pubmed_total']}  focus_disease={r['pubmed_focus_disease']}  cell_context={r['pubmed_cell_context']}  maturity={r['maturity_tag']} |")
         md.append(f"| Local DE convergence | n_files={r['n_supporting_de_files']}  examples={r['supporting_de_files'] or '—'} |")
         md.append(f"| Component breakdown | cross_lineage={r['cross_lineage']}  drug={r['druggability']}  genetics={r['disease_genetics']}  tract={r['tractability']}  expr={r['expression']}  novelty={r['novelty']}  over_studied={r['over_studied_penalty']} |")
         md.append("")
         md.append("**Rationale**: _TO BE FILLED BY CLAUDE — 2–3 sentences. Use prompts/rationale_template.md._")
         md.append("")
-        md.append("**Suggested next step**: _TO BE FILLED BY CLAUDE — 1 sentence (e.g. siRNA knockdown in primary CD4 T cells; check IL-17A readout)._")
+        md.append("**Suggested next step**: _TO BE FILLED BY CLAUDE — 1 concrete sentence (e.g. siRNA knockdown in the relevant cell type; orthogonal IHC; ex-vivo tool-compound challenge; cross-cohort replication)._")
         md.append("")
         md.append("---\n")
 

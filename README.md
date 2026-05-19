@@ -17,7 +17,7 @@ External references: [UniProt REST](https://www.uniprot.org/help/api) · [OpenTa
 
 A skill that turns a ranked gene list (typically a scRNA-seq DE output) into a per-gene drug-target dossier — fanning out parallel queries to UniProt, OpenTargets, and PubMed, scanning the local project for cross-lineage DE convergence, and re-ranking everything by a composite score combining protein biology, druggability, disease genetics, and research maturity.
 
-- **Multi-source evidence** — UniProt (localization, surface/secreted/MHC), OpenTargets (tractability, approved drugs, disease associations including GWAS-derived signal), PubMed (paper counts + IBD / T-cell context), and a local DE scanner for cross-lineage convergence
+- **Multi-source evidence** — UniProt (localization, surface / secreted / MHC), OpenTargets (tractability, approved drugs, disease associations including GWAS-derived signal), PubMed (total + configurable disease-focus + cell-context paper counts), and a local DE scanner for cross-lineage convergence
 - **Parallel fetchers** — Python `ThreadPoolExecutor` dispatches all sources concurrently
 - **Composite re-ranking** — per-component scores (cross-lineage, druggability, disease genetics, tractability, expression, novelty) combined via fully configurable `weights.yaml`
 - **No API keys, no external Python deps** — stdlib + curl-compatible network only
@@ -34,9 +34,11 @@ input gene list (CSV / TXT)
 scripts/orchestrate.py
         │
         ├─► fetch_uniprot.py        → protein localization, surface, MHC, signal peptide
-        ├─► fetch_opentargets.py    → tractability, approved drugs, IBD trials,
-        │                              associated diseases (integrates GWAS evidence)
-        ├─► fetch_pubmed.py         → total / IBD / T-cell paper counts, maturity tag
+        ├─► fetch_opentargets.py    → tractability, approved drugs, focus-disease
+        │                              trial tags, associated diseases (integrates
+        │                              GWAS evidence)
+        ├─► fetch_pubmed.py         → total + focus-disease + cell-context paper
+        │                              counts, maturity tag
         └─► fetch_local_de.py       → cross-lineage DE in sibling project dirs
                                        (hu_de_*, pert_de_*, cluster_degs*)
         │
@@ -74,20 +76,27 @@ No dependencies beyond Python 3.9+ and a `curl`-capable network.
 Just describe what you want — the skill triggers on any DE-list triage request:
 
 ```
-> Filter these candidate genes for druggable targets — IL23R, MAP3K8, TNF, HLA-DRB5
+> Filter these candidate genes for druggable targets — TP53, EGFR, MYC, KRAS, BRCA1
 
-> Make a target dossier for the genes in
-  /Volumes/data/CD4T_Step3/hu_de_Th1/post_r_vs_nr/expression_table_pass_either_1s.csv
-  — top 50 by DE rank, cross-reference my project at /Volumes/data for sibling DE files
+> Make a target dossier for the top 50 genes in
+  /path/to/de_output.csv  — cross-reference my project at /path/to/repo_root
+  for sibling DE files
 
 > Re-rank these with the druggability weight dialed up to 0.4
 ```
+
+The skill is domain-agnostic and works equally well for oncology
+(TP53 / EGFR / MYC), neurodegeneration (APP / TREM2 / SNCA),
+metabolic disease (PCSK9 / GCK / PNPLA3), autoimmunity, and any other
+human-gene context. The focus-disease and cell-context PubMed queries
+plus the OpenTargets focus-disease tag are user-editable — see
+[Retargeting](#retargeting-for-a-different-disease--cell-context) below.
 
 Or call the orchestrator directly:
 
 ```bash
 python3 ~/.claude/skills/target-prioritization/scripts/orchestrate.py \
-    --input  /path/to/expression_table_pass_either_1s.csv \
+    --input  /path/to/de_output.csv \
     --output /tmp/targets_run1 \
     --top 50 \
     --project-root /path/to/your_repo_root
@@ -103,14 +112,40 @@ After the run, ask Claude to fill in the rationale slots of `targets_report.md` 
 |---|---|
 | Score | `composite_score`, `tier`, plus per-component (`cross_lineage`, `druggability`, `disease_genetics`, `tractability`, `expression`, `novelty`, `over_studied_penalty`) |
 | UniProt | `uniprot_id`, `protein_name`, `subcellular_location`, `is_surface`, `is_secreted`, `is_mhc`, `has_transmembrane` |
-| OpenTargets | `approved_drug_count`, `highest_clinical_phase`, `any_ibd_drug`, `ibd_drugs`, `tractability_small_molecule`, `tractability_antibody` |
-| Disease genetics | `any_disease_assoc`, `is_ibd_associated`, `ibd_traits`, `max_ibd_assoc_score`, `max_disease_assoc_score` |
-| PubMed | `pubmed_total`, `pubmed_ibd`, `pubmed_t_cells`, `maturity_tag` |
+| OpenTargets | `approved_drug_count`, `highest_clinical_phase`, `any_focus_disease_drug`, `focus_disease_drugs`, `tractability_small_molecule`, `tractability_antibody` |
+| Disease genetics | `any_disease_assoc`, `is_focus_disease_associated`, `focus_disease_traits`, `max_focus_disease_assoc_score`, `max_disease_assoc_score` |
+| PubMed | `pubmed_total`, `pubmed_focus_disease`, `pubmed_cell_context`, `maturity_tag` |
 | Local DE | `n_supporting_de_files`, `supporting_de_files` |
 
 Tiers (after min-max rescaling): `Tier-1-priority` (≥0.75), `Tier-2-candidate` (≥0.50), `Tier-3-watchlist` (≥0.30), `Tier-4-deprioritized` (<0.30).
 
 `targets_report.md` — markdown dossier with one section per gene, sorted by composite score. Each section has a metadata table plus blank rationale + next-step slots for Claude to fill from the JSON cache.
+
+## Retargeting for a different disease / cell context
+
+The skill ships with an autoimmunity + T-cell default but is intentionally
+disease-agnostic. Two edits switch the focus:
+
+- `skills/target-prioritization/scripts/fetch_opentargets.py` and
+  `scripts/aggregate.py` — set `FOCUS_DISEASE_TERMS` to the lowercased
+  substrings that should tag a drug or associated-disease entry as
+  "in-scope":
+
+  | Domain | Example `FOCUS_DISEASE_TERMS` |
+  |---|---|
+  | Oncology | `("cancer", "carcinoma", "lymphoma", "leukemia", "tumor")` |
+  | Neurodegeneration | `("alzheimer", "parkinson", "huntington", "als")` |
+  | Metabolic | `("diabetes", "obesity", "fatty liver", "nash")` |
+  | Cardiovascular | `("heart failure", "atherosclerosis", "myocardial", "hypertension")` |
+
+- `skills/target-prioritization/scripts/fetch_pubmed.py` — adjust the
+  `focus_disease` and `cell_context` PubMed query templates in
+  `CONTEXTS`. The `cell_context` slot accepts any cell-type / lineage
+  string: `"hepatocyte"`, `"neuron"`, `"macrophage"`, `"cardiomyocyte"`,
+  `"beta cell"`, etc.
+
+CSV columns are already neutrally named (`focus_disease_*`,
+`cell_context`); no downstream code changes are needed after retargeting.
 
 ## Composite score
 
@@ -135,8 +170,8 @@ python3 ~/.claude/skills/target-prioritization/scripts/aggregate.py \
 | Source | What it gives | Rate-limit handling |
 |---|---|---|
 | **UniProt REST** | Protein name, function summary, subcellular location, surface / secreted / MHC flags, transmembrane, signal peptide | 100 req/sec, batched via `accession` queries |
-| **OpenTargets GraphQL** | Ensembl ID, tractability (SM + Ab + Pr + OC), approved drugs, max clinical phase, IBD-tagged drugs, associated diseases (integrates GWAS Catalog + other genetics sources) | Generous, single endpoint |
-| **PubMed E-utilities** | Total paper count, IBD-context count, T-cell-context count, maturity tag | 3 req/sec without API key |
+| **OpenTargets GraphQL** | Ensembl ID, tractability (SM + Ab + Pr + OC), approved drugs, max clinical phase, focus-disease-tagged drugs, associated diseases (integrates GWAS Catalog + other genetics sources) | Generous, single endpoint |
+| **PubMed E-utilities** | Total paper count + two user-configurable context counts (`focus_disease`, `cell_context`) + maturity tag | 3 req/sec without API key |
 | **Local DE scan** | Cross-lineage convergence across `hu_de_*`, `pert_de_*`, `cluster_degs*` sibling outputs (with direction + p-value evidence per source) | File-system only, no network |
 
 ## Compared to native Claude Code
@@ -144,7 +179,7 @@ python3 ~/.claude/skills/target-prioritization/scripts/aggregate.py \
 | Capability | Native Claude Code | target-prioritization |
 |---|---|---|
 | Look up UniProt for one gene | ✅ via web | ✅ batched + structured |
-| Look up OpenTargets drugs / disease assoc | ✅ via web | ✅ schema-mapped, IBD-tagged |
+| Look up OpenTargets drugs / disease assoc | ✅ via web | ✅ schema-mapped, focus-disease-tagged |
 | Count PubMed papers (+ disease context) | ⚠ slow, manual queries | ✅ parallel, deduped |
 | Cross-reference sibling DE files in a project | ❌ | ✅ auto-scan |
 | Composite re-ranking + tiering | ❌ | ✅ configurable weights |
@@ -164,7 +199,7 @@ python3 ~/.claude/skills/target-prioritization/scripts/aggregate.py \
 |---|---|
 | [single-cell-multiomics](https://github.com/Agents365-ai/single-cell-multiomics) | Producing the upstream DE CSVs in the first place |
 | [scholar-deep-research](https://github.com/Agents365-ai/scholar-deep-research) | If the rationale step needs deeper literature evidence per gene |
-| [paper-fetch](https://github.com/Agents365-ai/paper-fetch) | Pulling the full text of the IBD PMIDs surfaced by this skill |
+| [paper-fetch](https://github.com/Agents365-ai/paper-fetch) | Pulling the full text of the focus-disease PMIDs surfaced by this skill |
 
 ## 💬 Community
 

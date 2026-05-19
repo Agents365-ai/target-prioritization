@@ -2,6 +2,14 @@
 """OpenTargets GraphQL fetcher: druggability + approved drugs per gene.
 
 Queries by gene symbol → resolves Ensembl ID → drug + tractability summary.
+
+Customize FOCUS_DISEASE_TERMS for your project. Examples:
+  - Autoimmunity:    ("crohn", "ulcerative colitis", "inflammatory bowel")
+  - Oncology:        ("cancer", "carcinoma", "lymphoma", "leukemia", "tumor")
+  - Neurodegen:      ("alzheimer", "parkinson", "huntington", "als")
+  - Metabolic:       ("diabetes", "obesity", "fatty liver", "nash")
+A drug whose indication list contains any of these substrings is tagged
+in `focus_disease_drugs` and `any_focus_disease_drug = True`.
 """
 import argparse
 import json
@@ -80,6 +88,11 @@ def best_label(entries: list[dict]) -> str | None:
     return None
 
 
+# Lowercased substrings — a drug-indication string that contains any of
+# these is tagged as a focus-disease drug. Override for your project.
+FOCUS_DISEASE_TERMS = ("crohn", "ulcerative colitis", "inflammatory bowel")
+
+
 def gql(query: str, variables: dict) -> dict:
     body = json.dumps({"query": query, "variables": variables}).encode()
     req = urllib.request.Request(
@@ -105,8 +118,8 @@ def fetch_one(gene: str) -> dict:
         "approved_drug_count": 0,
         "approved_drugs": [],
         "highest_clinical_phase": 0,
-        "any_ibd_drug": False,
-        "ibd_drugs": [],
+        "any_focus_disease_drug": False,
+        "focus_disease_drugs": [],
         "associated_diseases_top5": [],
     }
     # resolve
@@ -165,10 +178,10 @@ def fetch_one(gene: str) -> dict:
             if not dis:
                 continue
             d["diseases"].add(dis)
-            if any(t in dis.lower() for t in ("crohn", "ulcerative colitis", "inflammatory bowel")):
-                out["any_ibd_drug"] = True
-                if name not in out["ibd_drugs"]:
-                    out["ibd_drugs"].append(name)
+            if any(t in dis.lower() for t in FOCUS_DISEASE_TERMS):
+                out["any_focus_disease_drug"] = True
+                if name not in out["focus_disease_drugs"]:
+                    out["focus_disease_drugs"].append(name)
 
     approved = [d for d in drugs_seen.values() if d["approved"]]
     out["approved_drug_count"] = len(approved)

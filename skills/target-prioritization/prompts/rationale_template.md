@@ -8,18 +8,18 @@ sentences total for rationale, 1 sentence for next step.
 
 Sentence 1 — **most compelling evidence** (pick the single strongest signal
 from the dossier row):
-- If `is_ibd_associated` → "OpenTargets surfaces an IBD disease
-  association (score [max_ibd_assoc_score]) — likely backed by GWAS /
-  text-mining evidence…"
-- Else if `any_ibd_drug` → "Already targeted by an approved IBD drug
-  ([drug name])…"
+- If `is_focus_disease_associated` → "OpenTargets surfaces a focus-disease
+  association (score [max_focus_disease_assoc_score]) — likely backed by
+  GWAS / text-mining evidence…"
+- Else if `any_focus_disease_drug` → "Already targeted by an approved
+  focus-disease drug ([drug name])…"
 - Else if `n_supporting_de_files >= 2` → "Cross-lineage DE convergence:
   significant in [N] sibling DE outputs…"
 - Else if `is_surface` AND `highest_clinical_phase >= 3` → "Surface protein
   with phase III drugs in adjacent indications…"
 - Else if `is_surface` AND `maturity_tag in {novel, moderate}` → "Surface
-  protein with moderate prior immunology literature ([N] PubMed hits) —
-  tractable for antibody/CAR approaches…"
+  protein with moderate prior literature ([N] PubMed hits) —
+  tractable for antibody / CAR / ADC approaches…"
 - Else use whatever component scores highest in the breakdown row.
 
 Sentence 2 — **main risk or caveat**:
@@ -31,36 +31,41 @@ Sentence 2 — **main risk or caveat**:
   inhibit selectively."
 - `composite` driven by single dimension only → "Score concentrated in one
   dimension — confirm with orthogonal evidence before pursuing."
-- No GWAS + no convergence → "Stat signal from DE only; lacks genetic /
-  cross-pipeline corroboration."
+- No disease association + no convergence → "Stat signal from DE only;
+  lacks genetic / cross-pipeline corroboration."
 
-Sentence 3 (optional) — **specific UST/IBD context** if obvious from the
-dossier (e.g. "Persists in NR Th1 cells at post-treatment, consistent with
-IFN-γ axis escape").
+Sentence 3 (optional) — **specific project context** if obvious from the
+dossier (e.g. "Persists in non-responder cells at post-treatment,
+consistent with [pathway] escape"; "Co-expressed with [marker] in the
+tumour microenvironment dataset"; "Up in [region] but absent from
+healthy control biopsies").
 
 ## Suggested next step (1 sentence)
 
-Be concrete. Examples:
-- "siRNA knockdown in primary CD4 T cells from CD biopsies; readout: IL-17A
-  + IFN-γ by intracellular cytokine staining."
-- "IHC on archival CD vs healthy TI biopsies to confirm protein-level
-  upregulation."
-- "Treat ex vivo lamina propria T cells with [tool compound from
-  approved_drugs] and compare with UST."
-- "Cross-check expression in an independent UST-treated cohort (e.g.
-  Martin 2019 GSE134809)."
-- "If no tool compound exists: structure-based virtual screen against
-  UniProt:[id]."
+Be concrete and adapted to the user's experimental context. Examples
+across domains:
+- **Functional genomics**: "siRNA / CRISPRi knockdown in the relevant
+  primary cell type; readout the disease-relevant secreted protein or
+  phosphorylation marker by ELISA / flow."
+- **Histology**: "IHC / RNAscope on patient vs healthy tissue from the
+  matching anatomical site to confirm protein-level upregulation."
+- **Pharmacology**: "Treat ex-vivo with [tool compound from approved_drugs]
+  and compare against the standard-of-care arm."
+- **Replication**: "Cross-check expression in an independent public
+  cohort with matched contrast (e.g. a GEO / ArrayExpress dataset)."
+- **Chemistry**: "If no tool compound exists: structure-based virtual
+  screen against UniProt:[id], or commission a fragment-screen pilot."
 
 ## Executive summary (top 5–10 genes)
 
 3–5 sentences total at the top of the report. Cover:
 1. How many genes scored Tier-1 vs Tier-2.
 2. The 2–3 most compelling individual candidates and the headline reason.
-3. Any pattern across the top genes (e.g. "5/10 are surface IFN-response
-  genes, suggesting type I/II IFN axis is the dominant escape pathway").
+3. Any pattern across the top genes (e.g. "5/10 are surface receptors in
+   the same signalling cassette, suggesting [pathway] is the dominant
+   axis").
 4. Caveats / what's missing (e.g. "All candidates derive from a single
-  contrast — recommend cross-checking against Th17 NR analysis").
+   contrast — recommend cross-checking against an orthogonal one").
 
 Keep it factual. Do not invent biology not supported by the dossier rows
 or the original DE context.

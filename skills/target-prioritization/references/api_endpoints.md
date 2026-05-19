@@ -36,7 +36,11 @@ All endpoints are free and require no API key.
 ## PubMed E-utilities
 
 - Endpoint: `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi`
-- Three queries per gene (total / IBD-context / T-cell-context).
+- Three queries per gene: `total`, `focus_disease`, `cell_context`. The
+  `focus_disease` and `cell_context` query templates live in
+  `scripts/fetch_pubmed.py::CONTEXTS` and can be re-pointed to any
+  domain (oncology, neurodegeneration, metabolic, etc.) by editing the
+  string.
 - Rate: **3 req/sec without API key**; we sleep 0.34s between requests.
   With an NCBI API key (env `NCBI_API_KEY`), up to 10 req/sec — not
   implemented here, easy to add.

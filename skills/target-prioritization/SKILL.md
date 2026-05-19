@@ -42,7 +42,7 @@ scripts/orchestrate.py
    ├─► fetch_opentargets.py    → tractability, approved drugs, associated
    │                              diseases (subsumes GWAS Catalog via OT's
    │                              integrated genetics evidence)
-   ├─► fetch_pubmed.py         → paper counts (total / IBD / T cells)
+   ├─► fetch_pubmed.py         → paper counts (total + focus_disease + cell_context)
    └─► fetch_local_de.py       → cross-lineage DE in sibling project dirs
                                   (scans hu_de_*, pert_de_*, cluster_degs* in
                                    parent project for the same gene)
@@ -93,7 +93,7 @@ targets with known biology":
 ```
 composite_score = w1 * cross_lineage_score      (DE convergence across pipelines/lineages)
                 + w2 * druggability_score        (approved drugs, tractability, clin trials)
-                + w3 * disease_genetics_score    (GWAS + IBD-specific GWAS)
+                + w3 * disease_genetics_score    (OpenTargets disease associations + focus-disease bonus)
                 + w4 * tractability_bonus        (surface or secreted vs intracellular)
                 + w5 * expression_score          (from input DE if present)
                 + w6 * novelty_bonus             (favors moderately studied)
@@ -126,12 +126,29 @@ All free, no API key needed. Rate limits handled in fetchers:
 For deeper API details and field mappings, see
 `references/api_endpoints.md`.
 
+## Retargeting the focus disease + cell context
+
+The skill ships with an autoimmunity / T-cell default but is intentionally
+disease-agnostic. Two edits switch the focus:
+
+- `scripts/fetch_opentargets.py` and `scripts/aggregate.py` — change
+  `FOCUS_DISEASE_TERMS` to the lowercased substrings that should mark a
+  drug or disease association as "in-scope" (e.g.
+  `("cancer", "carcinoma", "lymphoma")` for oncology;
+  `("alzheimer", "parkinson", "huntington", "als")` for neurodegeneration;
+  `("diabetes", "obesity", "fatty liver", "nash")` for metabolic disease).
+- `scripts/fetch_pubmed.py` — adjust the `focus_disease` and
+  `cell_context` queries in `CONTEXTS` (e.g.
+  `"hepatocyte"`, `"neuron"`, `"macrophage"` instead of `"T cell"`).
+
+No other code changes are needed; the CSV column names already use the
+neutral `focus_disease_*` / `cell_context` prefixes.
+
 ## When NOT to use this skill
 
 - Single-gene look-ups (overkill — just ask Claude to web-search)
 - Non-human genes (most APIs are human-only; fetchers will silently return empty)
-- Cancer driver analysis — use specialized tools (CGC, OncoKB)
-- Pure literature review without target ambition — use `literature-review` skill instead
+- Pure literature review without target ambition — use `scholar-deep-research` or `literature-review` instead
 
 ## Iteration tips
 
