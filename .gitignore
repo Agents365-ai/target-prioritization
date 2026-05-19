@@ -1,0 +1,12 @@
+# Claude
+CLAUDE.md
+.claude/
+logs/
+
+# Environment
+.env
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
