@@ -13,13 +13,13 @@
 
 [English](README.md) · **中文**
 
-外部参考:[UniProt REST](https://www.uniprot.org/help/api) · [OpenTargets GraphQL](https://platform-docs.opentargets.org/data-access/graphql-api) · [PubMed E-utilities](https://www.ncbi.nlm.nih.gov/books/NBK25501/) · [Human Protein Atlas](https://www.proteinatlas.org/about/help/dataaccess)
+外部参考:[UniProt REST](https://www.uniprot.org/help/api) · [OpenTargets GraphQL](https://platform-docs.opentargets.org/data-access/graphql-api) · [PubMed E-utilities](https://www.ncbi.nlm.nih.gov/books/NBK25501/) · [Human Protein Atlas](https://www.proteinatlas.org/about/help/dataaccess) · [DepMap](https://depmap.org/portal/) · [gnomAD](https://gnomad.broadinstitute.org/) · [ChEMBL](https://www.ebi.ac.uk/chembl/)
 
-把一份排序好的候选基因列表(通常是 scRNA-seq 差异表达输出)变成逐基因的药靶尽调档案 —— 并行查询 UniProt / OpenTargets / PubMed / Human Protein Atlas,按可配置的复合分数重新排序。
+把一份排序好的候选基因列表(通常是 scRNA-seq 差异表达输出)变成逐基因的药靶尽调档案 —— 并行查询 UniProt / OpenTargets(内含 DepMap CRISPR essentiality + gnomAD LoF 约束)/ PubMed / Human Protein Atlas / ChEMBL,按可配置的复合分数重新排序。
 
-- **多源证据** —— UniProt(亚细胞定位、表面 / 分泌 / MHC 标签)、OpenTargets(可成药性、获批药物、疾病关联,内含 GWAS 等遗传学证据)、PubMed(总论文数 + 可配置的疾病聚焦 + 细胞 / 谱系场景计数)、Human Protein Atlas(组织 / 单细胞 specificity 标签 + nCPM、表达 cluster、癌症 prognostic 概览)
+- **多源证据** —— UniProt(亚细胞定位、表面 / 分泌 / MHC 标签)、OpenTargets(可成药性、获批药物、疾病关联含 GWAS 等遗传学证据、**DepMap CRISPR essentiality**、**gnomAD LOEUF / pLI 约束**)、PubMed(总论文数 + 可配置的疾病聚焦 + 细胞 / 谱系场景计数)、Human Protein Atlas(组织 / 单细胞 specificity + nCPM、表达 cluster、癌症 prognostic)、ChEMBL(高活性工具化合物 IC50 + 机制——仅入 dossier,不入分)
 - **并行抓取** —— Python `ThreadPoolExecutor` 同时调度所有来源
-- **复合分重排** —— `druggability / disease_genetics / tractability / tissue_specificity / cell_context_score / expression / novelty / over_studied` 各项分数全部可在 `weights.yaml` 中按需调权
+- **复合分重排** —— `druggability / disease_genetics / tractability / tissue_specificity / cell_context_score / essentiality_score / safety_constraint_score / expression / novelty / over_studied` 各项分数全部可在 `weights.yaml` 中按需调权
 - **零 API key、零 Python 第三方依赖** —— 仅需 stdlib + `curl` 可达网络
 - **可重打分** —— raw JSON 缓存让你改完 `weights.yaml` 后秒级 rerun,无需重新拉接口
 
@@ -35,11 +35,14 @@ scripts/orchestrate.py
         │
         ├─► fetch_uniprot.py        → 蛋白定位、表面 / 分泌 / MHC、信号肽
         ├─► fetch_opentargets.py    → 可成药性、获批药物、聚焦疾病的临床试验、
-        │                              疾病关联(整合 GWAS 等遗传证据)
+        │                              疾病关联(整合 GWAS 等遗传证据)、
+        │                              DepMap CRISPR essentiality、gnomAD LOEUF
         ├─► fetch_pubmed.py         → 总文献数 + 聚焦疾病计数 + 细胞场景计数、
         │                              成熟度标签
-        └─► fetch_hpa.py            → HPA 组织 / 单细胞 specificity 与 nCPM、
-                                       表达 cluster、癌症 prognostic 概览
+        ├─► fetch_hpa.py            → HPA 组织 / 单细胞 specificity 与 nCPM、
+        │                              表达 cluster、癌症 prognostic 概览
+        └─► fetch_chembl.py         → 高活性工具化合物(pIC50 / IC50 / 机制)
+                                       —— 仅作 dossier,不入复合分
         │
         ▼
 scripts/aggregate.py — 复合分 + 分层
@@ -103,12 +106,15 @@ python3 ~/.claude/skills/target-prioritization/scripts/orchestrate.py \
 
 | 字段组 | 示例列 |
 |---|---|
-| 分数 | `composite_score`、`tier`,以及各分量(`druggability`、`disease_genetics`、`tractability`、`tissue_specificity`、`cell_context_score`、`expression`、`novelty`、`over_studied_penalty`) |
+| 分数 | `composite_score`、`tier`,以及各分量(`druggability`、`disease_genetics`、`tractability`、`tissue_specificity`、`cell_context_score`、`essentiality_score`、`safety_constraint_score`、`expression`、`novelty`、`over_studied_penalty`) |
 | UniProt | `uniprot_id`、`protein_name`、`subcellular_location`、`is_surface`、`is_secreted`、`is_mhc`、`has_transmembrane` |
 | OpenTargets | `approved_drug_count`、`highest_clinical_phase`、`any_focus_disease_drug`、`focus_disease_drugs`、`tractability_small_molecule`、`tractability_antibody` |
 | 疾病遗传 | `any_disease_assoc`、`is_focus_disease_associated`、`focus_disease_traits`、`max_focus_disease_assoc_score`、`max_disease_assoc_score` |
 | PubMed | `pubmed_total`、`pubmed_focus_disease`、`pubmed_cell_context`、`maturity_tag` |
 | HPA | `hpa_tissue_specificity_tag`、`hpa_tissue_top_types`、`hpa_cell_specificity_tag`、`hpa_cell_top_types`、`hpa_focus_cell_hits`、`hpa_expression_cluster`、`hpa_n_prognostic_cancers`、`hpa_cancer_specificity` |
+| DepMap | `depmap_n_screens`、`depmap_mean_gene_effect`、`depmap_pct_essential` |
+| gnomAD 约束 | `loeuf`、`constraint_oe_lof`、`constraint_top_decile` |
+| ChEMBL | `chembl_target_id`、`chembl_best_pchembl`、`chembl_best_ic50_nm`、`chembl_top_compounds` |
 
 分层(min-max 归一后):`Tier-1-priority` (≥0.75)、`Tier-2-candidate` (≥0.50)、`Tier-3-watchlist` (≥0.30)、`Tier-4-deprioritized` (<0.30)。
 
@@ -139,9 +145,10 @@ CSV 字段名已经使用中性命名(`focus_disease_*`、`cell_context`、
 ## 复合分
 
 ```
-composite = 0.25 · druggability      + 0.20 · disease_genetics + 0.15 · tractability
-          + 0.10 · tissue_specificity + 0.10 · cell_context_score
-          + 0.10 · expression         + 0.10 · novelty
+composite = 0.20 · druggability          + 0.15 · disease_genetics + 0.15 · tractability
+          + 0.10 · tissue_specificity    + 0.10 · cell_context_score
+          + 0.10 · essentiality_score    + 0.05 · safety_constraint_score
+          + 0.10 · expression            + 0.05 · novelty
           - 0.10 · over_studied_penalty
 ```
 
@@ -167,6 +174,9 @@ python3 ~/.claude/skills/target-prioritization/scripts/aggregate.py \
 | **OpenTargets GraphQL** | Ensembl ID、可成药性(SM + Ab + Pr + OC)、获批药物、最高临床期、聚焦疾病标签药物、疾病关联(整合 GWAS Catalog 等多种遗传学证据) | 单端点,限额宽松 |
 | **PubMed E-utilities** | 总文献数 + 两个可配置场景计数(`focus_disease`、`cell_context`)+ 成熟度标签 | 无 API key 时 3 req/s |
 | **Human Protein Atlas** | 组织 / 单细胞 specificity 标签、top tissue nTPM、top single-cell nCPM、表达 cluster、prognostic 癌种数、cancer specificity | 无显式限流;fetcher 每基因 sleep 0.15s |
+| **DepMap CRISPR essentiality** | 每个组织 + 每个细胞系的 `geneEffect`,聚合成 `pct_essential` 和 `mean_gene_effect` | 搭车 OpenTargets,不增加 HTTP |
+| **gnomAD constraint** | LOEUF(LoF row 的 `oeUpper`)、`oe_lof`、top-decile 标记 | 搭车 OpenTargets,绕过 gnomAD 直接 API 的 WAF |
+| **ChEMBL REST** | 每个基因前 5 个最高活性 IC50 工具化合物 + pIC50 / 机制 | ~5 req/s;fetcher 每基因 sleep 0.2s |
 
 ## 与 Claude Code 原生能力对比
 
@@ -176,6 +186,9 @@ python3 ~/.claude/skills/target-prioritization/scripts/aggregate.py \
 | OpenTargets 药物 / 疾病关联 | ✅ 通过 web | ✅ schema 映射、聚焦疾病自动打标 |
 | PubMed 文献计数(含疾病场景) | ⚠ 慢、需手动反复查询 | ✅ 并行、去重 |
 | HPA 组织 / 单细胞表达 + 癌症 prognostic | ✅ 通过 web | ✅ 打标签、排名,并按 `FOCUS_CELL_TYPES` 入分 |
+| DepMap CRISPR essentiality 汇总 | ❌ | ✅ 每基因 `pct_essential`,pan-essential 已封顶 |
+| gnomAD LoF 约束(LOEUF / pLI) | ❌ | ✅ 显示并折算成 safety 分量 |
+| ChEMBL 高活性工具化合物(IC50 / 机制) | ❌ | ✅ 给「下一步实验」rationale 提供具体抓手 |
 | 复合分 + 分层 | ❌ | ✅ 权重可配置 |
 | 可复核审计快照 | ❌ | ✅ raw JSON 缓存 |
 | 不重新拉接口的重打分 | ❌ | ✅ ~1s |
