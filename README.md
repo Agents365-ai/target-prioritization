@@ -13,13 +13,13 @@
 
 **English** · [中文](README_CN.md)
 
-External references: [UniProt REST](https://www.uniprot.org/help/api) · [OpenTargets GraphQL](https://platform-docs.opentargets.org/data-access/graphql-api) · [PubMed E-utilities](https://www.ncbi.nlm.nih.gov/books/NBK25501/)
+External references: [UniProt REST](https://www.uniprot.org/help/api) · [OpenTargets GraphQL](https://platform-docs.opentargets.org/data-access/graphql-api) · [PubMed E-utilities](https://www.ncbi.nlm.nih.gov/books/NBK25501/) · [Human Protein Atlas](https://www.proteinatlas.org/about/help/dataaccess)
 
-A skill that turns a ranked gene list (typically a scRNA-seq DE output) into a per-gene drug-target dossier — fanning out parallel queries to UniProt, OpenTargets, and PubMed, then re-ranking everything by a composite score combining protein biology, druggability, disease genetics, and research maturity.
+A skill that turns a ranked gene list (typically a scRNA-seq DE output) into a per-gene drug-target dossier — fanning out parallel queries to UniProt, OpenTargets, PubMed, and the Human Protein Atlas, then re-ranking everything by a composite score combining protein biology, druggability, disease genetics, tissue / cell-type specificity, and research maturity.
 
-- **Multi-source evidence** — UniProt (localization, surface / secreted / MHC), OpenTargets (tractability, approved drugs, disease associations including GWAS-derived signal), PubMed (total + configurable disease-focus + cell-context paper counts)
+- **Multi-source evidence** — UniProt (localization, surface / secreted / MHC), OpenTargets (tractability, approved drugs, disease associations including GWAS-derived signal), PubMed (total + configurable disease-focus + cell-context paper counts), Human Protein Atlas (tissue + single-cell specificity and nCPM, expression cluster, cancer prognostics)
 - **Parallel fetchers** — Python `ThreadPoolExecutor` dispatches all sources concurrently
-- **Composite re-ranking** — per-component scores (druggability, disease genetics, tractability, expression, novelty) combined via fully configurable `weights.yaml`
+- **Composite re-ranking** — per-component scores (druggability, disease genetics, tractability, tissue specificity, cell context, expression, novelty) combined via fully configurable `weights.yaml`
 - **No API keys, no external Python deps** — stdlib + curl-compatible network only
 - **Re-scorable** — raw JSON cache lets you tweak `weights.yaml` and rerun aggregate in seconds without re-fetching
 
@@ -37,8 +37,11 @@ scripts/orchestrate.py
         ├─► fetch_opentargets.py    → tractability, approved drugs, focus-disease
         │                              trial tags, associated diseases (integrates
         │                              GWAS evidence)
-        └─► fetch_pubmed.py         → total + focus-disease + cell-context paper
-                                       counts, maturity tag
+        ├─► fetch_pubmed.py         → total + focus-disease + cell-context paper
+        │                              counts, maturity tag
+        └─► fetch_hpa.py            → HPA tissue / single-cell specificity tag,
+                                       top tissue/cell-type nTPM/nCPM, expression
+                                       cluster, cancer prognostics summary
         │
         ▼
 scripts/aggregate.py — composite score + tier assignment
@@ -105,11 +108,12 @@ After the run, ask Claude to fill in the rationale slots of `targets_report.md` 
 
 | Field group | Example columns |
 |---|---|
-| Score | `composite_score`, `tier`, plus per-component (`druggability`, `disease_genetics`, `tractability`, `expression`, `novelty`, `over_studied_penalty`) |
+| Score | `composite_score`, `tier`, plus per-component (`druggability`, `disease_genetics`, `tractability`, `tissue_specificity`, `cell_context_score`, `expression`, `novelty`, `over_studied_penalty`) |
 | UniProt | `uniprot_id`, `protein_name`, `subcellular_location`, `is_surface`, `is_secreted`, `is_mhc`, `has_transmembrane` |
 | OpenTargets | `approved_drug_count`, `highest_clinical_phase`, `any_focus_disease_drug`, `focus_disease_drugs`, `tractability_small_molecule`, `tractability_antibody` |
 | Disease genetics | `any_disease_assoc`, `is_focus_disease_associated`, `focus_disease_traits`, `max_focus_disease_assoc_score`, `max_disease_assoc_score` |
 | PubMed | `pubmed_total`, `pubmed_focus_disease`, `pubmed_cell_context`, `maturity_tag` |
+| HPA | `hpa_tissue_specificity_tag`, `hpa_tissue_top_types`, `hpa_cell_specificity_tag`, `hpa_cell_top_types`, `hpa_focus_cell_hits`, `hpa_expression_cluster`, `hpa_n_prognostic_cancers`, `hpa_cancer_specificity` |
 
 Tiers (after min-max rescaling): `Tier-1-priority` (≥0.75), `Tier-2-candidate` (≥0.50), `Tier-3-watchlist` (≥0.30), `Tier-4-deprioritized` (<0.30).
 
@@ -118,35 +122,37 @@ Tiers (after min-max rescaling): `Tier-1-priority` (≥0.75), `Tier-2-candidate`
 ## Retargeting for a different disease / cell context
 
 The skill ships with an autoimmunity + T-cell default but is intentionally
-disease-agnostic. Two edits switch the focus:
+disease-agnostic. Three edits switch the focus:
 
 - `skills/target-prioritization/scripts/fetch_opentargets.py` and
   `scripts/aggregate.py` — set `FOCUS_DISEASE_TERMS` to the lowercased
   substrings that should tag a drug or associated-disease entry as
   "in-scope":
 
-  | Domain | Example `FOCUS_DISEASE_TERMS` |
-  |---|---|
-  | Oncology | `("cancer", "carcinoma", "lymphoma", "leukemia", "tumor")` |
-  | Neurodegeneration | `("alzheimer", "parkinson", "huntington", "als")` |
-  | Metabolic | `("diabetes", "obesity", "fatty liver", "nash")` |
-  | Cardiovascular | `("heart failure", "atherosclerosis", "myocardial", "hypertension")` |
+  | Domain | Example `FOCUS_DISEASE_TERMS` | Example `FOCUS_CELL_TYPES` (HPA single-cell names) |
+  |---|---|---|
+  | Oncology | `("cancer", "carcinoma", "lymphoma", "leukemia", "tumor")` | `("Macrophages", "Fibroblasts", "T-cells")` |
+  | Neurodegeneration | `("alzheimer", "parkinson", "huntington", "als")` | `("Excitatory neurons", "Microglial cells", "Astrocytes")` |
+  | Metabolic / liver | `("diabetes", "obesity", "fatty liver", "nash")` | `("Hepatocytes", "Kupffer cells")` |
+  | Cardiovascular | `("heart failure", "atherosclerosis", "myocardial", "hypertension")` | `("Cardiomyocytes", "Endothelial cells")` |
 
-- `skills/target-prioritization/scripts/fetch_pubmed.py` — adjust the
-  `focus_disease` and `cell_context` PubMed query templates in
-  `CONTEXTS`. The `cell_context` slot accepts any cell-type / lineage
-  string: `"hepatocyte"`, `"neuron"`, `"macrophage"`, `"cardiomyocyte"`,
-  `"beta cell"`, etc.
+- `scripts/aggregate.py::FOCUS_CELL_TYPES` — must match HPA's exact
+  cell-type strings (case-sensitive). Drives `cell_context_score`.
+- `scripts/fetch_pubmed.py::CONTEXTS` — adjust the `focus_disease` and
+  `cell_context` PubMed query templates. The `cell_context` slot accepts
+  any cell-type / lineage string and is used only for the dossier counts.
 
 CSV columns are already neutrally named (`focus_disease_*`,
-`cell_context`); no downstream code changes are needed after retargeting.
+`cell_context`, `hpa_focus_cell_hits`); no downstream code changes are
+needed after retargeting.
 
 ## Composite score
 
 ```
 composite = w1 · druggability      + w2 · disease_genetics + w3 · tractability
-          + w4 · expression         + w5 · novelty
-          - w6 · over_studied_penalty
+          + w4 · tissue_specificity + w5 · cell_context_score
+          + w6 · expression         + w7 · novelty
+          - w8 · over_studied_penalty
 ```
 
 All weights live in `weights.yaml` and can be overridden per run with `--weights`. Re-scoring with new weights costs ~1s (no API re-fetch):
@@ -166,6 +172,7 @@ python3 ~/.claude/skills/target-prioritization/scripts/aggregate.py \
 | **UniProt REST** | Protein name, function summary, subcellular location, surface / secreted / MHC flags, transmembrane, signal peptide | 100 req/sec, batched via `accession` queries |
 | **OpenTargets GraphQL** | Ensembl ID, tractability (SM + Ab + Pr + OC), approved drugs, max clinical phase, focus-disease-tagged drugs, associated diseases (integrates GWAS Catalog + other genetics sources) | Generous, single endpoint |
 | **PubMed E-utilities** | Total paper count + two user-configurable context counts (`focus_disease`, `cell_context`) + maturity tag | 3 req/sec without API key |
+| **Human Protein Atlas** | Tissue / single-cell specificity tag, top tissue nTPM, top single-cell nCPM, expression cluster, prognostic cancer count + cancer specificity | None documented; fetcher sleeps 0.15s/gene |
 
 ## Compared to native Claude Code
 

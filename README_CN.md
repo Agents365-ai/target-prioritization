@@ -13,13 +13,13 @@
 
 [English](README.md) · **中文**
 
-外部参考:[UniProt REST](https://www.uniprot.org/help/api) · [OpenTargets GraphQL](https://platform-docs.opentargets.org/data-access/graphql-api) · [PubMed E-utilities](https://www.ncbi.nlm.nih.gov/books/NBK25501/)
+外部参考:[UniProt REST](https://www.uniprot.org/help/api) · [OpenTargets GraphQL](https://platform-docs.opentargets.org/data-access/graphql-api) · [PubMed E-utilities](https://www.ncbi.nlm.nih.gov/books/NBK25501/) · [Human Protein Atlas](https://www.proteinatlas.org/about/help/dataaccess)
 
-把一份排序好的候选基因列表(通常是 scRNA-seq 差异表达输出)变成逐基因的药靶尽调档案 —— 并行查询 UniProt / OpenTargets / PubMed,按可配置的复合分数重新排序。
+把一份排序好的候选基因列表(通常是 scRNA-seq 差异表达输出)变成逐基因的药靶尽调档案 —— 并行查询 UniProt / OpenTargets / PubMed / Human Protein Atlas,按可配置的复合分数重新排序。
 
-- **多源证据** —— UniProt(亚细胞定位、表面 / 分泌 / MHC 标签)、OpenTargets(可成药性、获批药物、疾病关联,内含 GWAS 等遗传学证据)、PubMed(总论文数 + 可配置的疾病聚焦 + 细胞 / 谱系场景计数)
+- **多源证据** —— UniProt(亚细胞定位、表面 / 分泌 / MHC 标签)、OpenTargets(可成药性、获批药物、疾病关联,内含 GWAS 等遗传学证据)、PubMed(总论文数 + 可配置的疾病聚焦 + 细胞 / 谱系场景计数)、Human Protein Atlas(组织 / 单细胞 specificity 标签 + nCPM、表达 cluster、癌症 prognostic 概览)
 - **并行抓取** —— Python `ThreadPoolExecutor` 同时调度所有来源
-- **复合分重排** —— `druggability / disease_genetics / tractability / expression / novelty / over_studied` 各项分数全部可在 `weights.yaml` 中按需调权
+- **复合分重排** —— `druggability / disease_genetics / tractability / tissue_specificity / cell_context_score / expression / novelty / over_studied` 各项分数全部可在 `weights.yaml` 中按需调权
 - **零 API key、零 Python 第三方依赖** —— 仅需 stdlib + `curl` 可达网络
 - **可重打分** —— raw JSON 缓存让你改完 `weights.yaml` 后秒级 rerun,无需重新拉接口
 
@@ -36,8 +36,10 @@ scripts/orchestrate.py
         ├─► fetch_uniprot.py        → 蛋白定位、表面 / 分泌 / MHC、信号肽
         ├─► fetch_opentargets.py    → 可成药性、获批药物、聚焦疾病的临床试验、
         │                              疾病关联(整合 GWAS 等遗传证据)
-        └─► fetch_pubmed.py         → 总文献数 + 聚焦疾病计数 + 细胞场景计数、
-                                       成熟度标签
+        ├─► fetch_pubmed.py         → 总文献数 + 聚焦疾病计数 + 细胞场景计数、
+        │                              成熟度标签
+        └─► fetch_hpa.py            → HPA 组织 / 单细胞 specificity 与 nCPM、
+                                       表达 cluster、癌症 prognostic 概览
         │
         ▼
 scripts/aggregate.py — 复合分 + 分层
@@ -101,11 +103,12 @@ python3 ~/.claude/skills/target-prioritization/scripts/orchestrate.py \
 
 | 字段组 | 示例列 |
 |---|---|
-| 分数 | `composite_score`、`tier`,以及各分量(`druggability`、`disease_genetics`、`tractability`、`expression`、`novelty`、`over_studied_penalty`) |
+| 分数 | `composite_score`、`tier`,以及各分量(`druggability`、`disease_genetics`、`tractability`、`tissue_specificity`、`cell_context_score`、`expression`、`novelty`、`over_studied_penalty`) |
 | UniProt | `uniprot_id`、`protein_name`、`subcellular_location`、`is_surface`、`is_secreted`、`is_mhc`、`has_transmembrane` |
 | OpenTargets | `approved_drug_count`、`highest_clinical_phase`、`any_focus_disease_drug`、`focus_disease_drugs`、`tractability_small_molecule`、`tractability_antibody` |
 | 疾病遗传 | `any_disease_assoc`、`is_focus_disease_associated`、`focus_disease_traits`、`max_focus_disease_assoc_score`、`max_disease_assoc_score` |
 | PubMed | `pubmed_total`、`pubmed_focus_disease`、`pubmed_cell_context`、`maturity_tag` |
+| HPA | `hpa_tissue_specificity_tag`、`hpa_tissue_top_types`、`hpa_cell_specificity_tag`、`hpa_cell_top_types`、`hpa_focus_cell_hits`、`hpa_expression_cluster`、`hpa_n_prognostic_cancers`、`hpa_cancer_specificity` |
 
 分层(min-max 归一后):`Tier-1-priority` (≥0.75)、`Tier-2-candidate` (≥0.50)、`Tier-3-watchlist` (≥0.30)、`Tier-4-deprioritized` (<0.30)。
 
@@ -113,31 +116,33 @@ python3 ~/.claude/skills/target-prioritization/scripts/orchestrate.py \
 
 ## 切换学科 / 细胞场景
 
-技能默认配置面向自免 + T 细胞,但本身是学科无关的。两处编辑即可切换:
+技能默认配置面向自免 + T 细胞,但本身是学科无关的。三处编辑即可切换:
 
-- `skills/target-prioritization/scripts/fetch_opentargets.py` 和 `scripts/aggregate.py`
-  —— 把 `FOCUS_DISEASE_TERMS` 改成你想识别为「在范围内」的小写关键词:
+- `scripts/fetch_opentargets.py` 和 `scripts/aggregate.py::FOCUS_DISEASE_TERMS`
+  —— 用于在 OT 药物适应症和 disease association 里识别「在范围内」的小写关键词:
 
-  | 学科 | 示例 `FOCUS_DISEASE_TERMS` |
-  |---|---|
-  | 肿瘤 | `("cancer", "carcinoma", "lymphoma", "leukemia", "tumor")` |
-  | 神经退行 | `("alzheimer", "parkinson", "huntington", "als")` |
-  | 代谢 | `("diabetes", "obesity", "fatty liver", "nash")` |
-  | 心血管 | `("heart failure", "atherosclerosis", "myocardial", "hypertension")` |
+  | 学科 | 示例 `FOCUS_DISEASE_TERMS` | 示例 `FOCUS_CELL_TYPES`(HPA 单细胞名,大小写敏感) |
+  |---|---|---|
+  | 肿瘤 | `("cancer", "carcinoma", "lymphoma", "leukemia", "tumor")` | `("Macrophages", "Fibroblasts", "T-cells")` |
+  | 神经退行 | `("alzheimer", "parkinson", "huntington", "als")` | `("Excitatory neurons", "Microglial cells", "Astrocytes")` |
+  | 代谢 / 肝 | `("diabetes", "obesity", "fatty liver", "nash")` | `("Hepatocytes", "Kupffer cells")` |
+  | 心血管 | `("heart failure", "atherosclerosis", "myocardial", "hypertension")` | `("Cardiomyocytes", "Endothelial cells")` |
 
-- `skills/target-prioritization/scripts/fetch_pubmed.py` —— 把
-  `CONTEXTS` 里的 `focus_disease` 和 `cell_context` 查询模板改成你的关键词;
-  `cell_context` 支持任意细胞类型/谱系字符串(`"hepatocyte"`、`"neuron"`、
-  `"macrophage"`、`"cardiomyocyte"`、`"beta cell"` 等)。
+- `scripts/aggregate.py::FOCUS_CELL_TYPES` —— 决定 `cell_context_score` 中
+  哪些 HPA 单细胞类型算作「目标细胞」(必须与 HPA 字符串完全一致)。
+- `scripts/fetch_pubmed.py::CONTEXTS` —— 调整 `focus_disease` 和 `cell_context`
+  的 PubMed 查询模板,仅用于 dossier 里的文献计数。
 
-CSV 字段名已经使用中性命名(`focus_disease_*`、`cell_context`),切换后下游不需要任何改动。
+CSV 字段名已经使用中性命名(`focus_disease_*`、`cell_context`、
+`hpa_focus_cell_hits`),切换后下游不需要任何改动。
 
 ## 复合分
 
 ```
 composite = w1 · druggability      + w2 · disease_genetics + w3 · tractability
-          + w4 · expression         + w5 · novelty
-          - w6 · over_studied_penalty
+          + w4 · tissue_specificity + w5 · cell_context_score
+          + w6 · expression         + w7 · novelty
+          - w8 · over_studied_penalty
 ```
 
 权重全部在 `weights.yaml` 里,跑命令时可 `--weights` 临时覆盖。改完权重重新打分仅 ~1s,不重新拉接口:
@@ -157,6 +162,7 @@ python3 ~/.claude/skills/target-prioritization/scripts/aggregate.py \
 | **UniProt REST** | 蛋白名 / 功能摘要 / 亚细胞定位 / 表面 / 分泌 / MHC / 跨膜 / 信号肽 | 100 req/s,按 `accession` 批量 |
 | **OpenTargets GraphQL** | Ensembl ID、可成药性(SM + Ab + Pr + OC)、获批药物、最高临床期、聚焦疾病标签药物、疾病关联(整合 GWAS Catalog 等多种遗传学证据) | 单端点,限额宽松 |
 | **PubMed E-utilities** | 总文献数 + 两个可配置场景计数(`focus_disease`、`cell_context`)+ 成熟度标签 | 无 API key 时 3 req/s |
+| **Human Protein Atlas** | 组织 / 单细胞 specificity 标签、top tissue nTPM、top single-cell nCPM、表达 cluster、prognostic 癌种数、cancer specificity | 无显式限流;fetcher 每基因 sleep 0.15s |
 
 ## 与 Claude Code 原生能力对比
 
