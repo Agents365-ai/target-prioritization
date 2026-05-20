@@ -156,6 +156,37 @@ composite = 0.20 · druggability          + 0.15 · disease_genetics + 0.15 · t
 再按四档分层(`Tier-1-priority` ≥ 0.75、`Tier-2-candidate` ≥ 0.50、
 `Tier-3-watchlist` ≥ 0.30、`Tier-4-deprioritized` < 0.30)。
 
+### 各分量含义
+
+| 分量 | 得高分意味着 | 数据源 |
+|---|---|---|
+| `druggability` | 已有获批药物或邻近适应症 Phase III 候选 | OpenTargets `drugAndClinicalCandidates` |
+| `disease_genetics` | OT 疾病关联强(focus-disease 命中再加分) | OpenTargets `associatedDiseases` |
+| `tractability` | 表面 / 分泌(相对于胞内蛋白) | UniProt + TM / 信号肽特征 |
+| `tissue_specificity` | HPA `Tissue enriched` / `Group enriched`——组织表达狭窄 | HPA `RNA tissue specificity` |
+| `cell_context_score` | `FOCUS_CELL_TYPES` 出现在该基因单细胞 nCPM 排名靠前的细胞类型 | HPA `RNA single cell type specific nCPM` |
+| `essentiality_score` | DepMap 中 20–80% 的细胞系依赖它(选择性必需,而非 pan-essential) | OpenTargets `depMapEssentiality` |
+| `safety_constraint_score` | gnomAD LOEUF ≥ 1.0——人群中 LoF 被自然容忍 | OpenTargets `geneticConstraint` |
+| `expression` | 输入 DE 表里该基因 mean expression 高 | 输入 CSV |
+| `novelty` | 中等研究量(PubMed 总数在 5~100 之间) | PubMed |
+| `over_studied_penalty` | PubMed > 100 时被扣分(边际收益递减) | PubMed |
+
+### 示例:4 基因冒烟测试
+
+在 `EGFR, TP53, TNFRSF4, KRAS` 上运行(默认
+`FOCUS_CELL_TYPES = ("T-cells",)`):
+
+| Gene | Tier | composite | essentiality | safety | cell_context | ChEMBL best pIC50 |
+|---|---|---|---|---|---|---|
+| TNFRSF4 | Tier-1-priority | 1.000 | 0.001 | 1.000 | 0.400 | — |
+| EGFR | Tier-2-candidate | 0.669 | 0.224 | 0.596 | 0.000 | 11.0(MOBOCERTINIB)|
+| KRAS | Tier-2-candidate | 0.533 | 0.429 | 0.300 | 0.000 | 10.0 |
+| TP53 | Tier-4-deprioritized | 0.000 | 0.003 | 0.576 | 0.000 | — |
+
+排名符合生物学直觉:TNFRSF4 因 T 细胞焦点匹配胜出;KRAS essentiality
+34% 是肿瘤依赖性最强的;TP53 沉到 Tier-4,因为它 KO 反而**有利于**
+肿瘤细胞生长(mean geneEffect +0.38),且 ChEMBL 没有高活性 IC50 工具化合物。
+
 权重全部在 `weights.yaml` 里,跑命令时可 `--weights` 临时覆盖。改完权重重新打分仅 ~1s,不重新拉接口:
 
 ```bash

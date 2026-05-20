@@ -167,6 +167,38 @@ composite is min-max rescaled to `[0, 1]` across the run and bucketed into
 four tiers (`Tier-1-priority` ≥ 0.75, `Tier-2-candidate` ≥ 0.50,
 `Tier-3-watchlist` ≥ 0.30, `Tier-4-deprioritized` < 0.30).
 
+### What each component measures
+
+| Component | What "high" means | Source |
+|---|---|---|
+| `druggability` | Approved drug exists OR Phase III candidate in adjacent indication | OpenTargets `drugAndClinicalCandidates` |
+| `disease_genetics` | Strong OT disease association (+ bonus if focus-disease) | OpenTargets `associatedDiseases` |
+| `tractability` | Surface or secreted vs intracellular | UniProt + TM / signal peptide features |
+| `tissue_specificity` | HPA `Tissue enriched` / `Group enriched` — narrow tissue expression | HPA `RNA tissue specificity` |
+| `cell_context_score` | A `FOCUS_CELL_TYPES` member ranks in the top of this gene's per-cell nCPM | HPA `RNA single cell type specific nCPM` |
+| `essentiality_score` | 20–80% of DepMap cell lines depend on it (selective, not pan-essential) | OpenTargets `depMapEssentiality` |
+| `safety_constraint_score` | gnomAD LOEUF ≥ 1.0 — natural LoF tolerated in humans | OpenTargets `geneticConstraint` |
+| `expression` | High mean expression in the input DE contrast | input CSV |
+| `novelty` | Moderately studied (≥ 5 and ≤ 100 PubMed papers) | PubMed |
+| `over_studied_penalty` | Subtracted when PubMed total > 100 (diminishing returns) | PubMed |
+
+### Example: 4-gene smoke test
+
+Running on `EGFR, TP53, TNFRSF4, KRAS` with the default
+`FOCUS_CELL_TYPES = ("T-cells",)`:
+
+| Gene | Tier | composite | essentiality | safety | cell_context | best pIC50 (ChEMBL) |
+|---|---|---|---|---|---|---|
+| TNFRSF4 | Tier-1-priority | 1.000 | 0.001 | 1.000 | 0.400 | — |
+| EGFR | Tier-2-candidate | 0.669 | 0.224 | 0.596 | 0.000 | 11.0 (MOBOCERTINIB) |
+| KRAS | Tier-2-candidate | 0.533 | 0.429 | 0.300 | 0.000 | 10.0 |
+| TP53 | Tier-4-deprioritized | 0.000 | 0.003 | 0.576 | 0.000 | — |
+
+The ranking reflects biology: TNFRSF4 wins for the T-cell focus (default),
+KRAS shows the strongest cancer-cell-line dependency (34% essential), TP53
+sinks because its KO _helps_ tumor cells (mean geneEffect +0.38) and no
+potent IC50 tool compound exists in ChEMBL.
+
 All weights live in `weights.yaml` and can be overridden per run with `--weights`. Re-scoring with new weights costs ~1s (no API re-fetch):
 
 ```bash
