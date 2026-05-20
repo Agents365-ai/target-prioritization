@@ -149,11 +149,16 @@ needed after retargeting.
 ## Composite score
 
 ```
-composite = w1 · druggability      + w2 · disease_genetics + w3 · tractability
-          + w4 · tissue_specificity + w5 · cell_context_score
-          + w6 · expression         + w7 · novelty
-          - w8 · over_studied_penalty
+composite = 0.25 · druggability      + 0.20 · disease_genetics + 0.15 · tractability
+          + 0.10 · tissue_specificity + 0.10 · cell_context_score
+          + 0.10 · expression         + 0.10 · novelty
+          - 0.10 · over_studied_penalty
 ```
+
+Each component is clipped to `[0, 1]` before weighting. After summing the
+composite is min-max rescaled to `[0, 1]` across the run and bucketed into
+four tiers (`Tier-1-priority` ≥ 0.75, `Tier-2-candidate` ≥ 0.50,
+`Tier-3-watchlist` ≥ 0.30, `Tier-4-deprioritized` < 0.30).
 
 All weights live in `weights.yaml` and can be overridden per run with `--weights`. Re-scoring with new weights costs ~1s (no API re-fetch):
 
@@ -181,6 +186,7 @@ python3 ~/.claude/skills/target-prioritization/scripts/aggregate.py \
 | Look up UniProt for one gene | ✅ via web | ✅ batched + structured |
 | Look up OpenTargets drugs / disease assoc | ✅ via web | ✅ schema-mapped, focus-disease-tagged |
 | Count PubMed papers (+ disease context) | ⚠ slow, manual queries | ✅ parallel, deduped |
+| HPA tissue / single-cell expression + cancer prognostics | ✅ via web | ✅ tagged, ranked, scored against `FOCUS_CELL_TYPES` |
 | Composite re-ranking + tiering | ❌ | ✅ configurable weights |
 | Reproducible audit trail | ❌ | ✅ raw JSON cache |
 | Re-score without re-fetching | ❌ | ✅ ~1s rerun |

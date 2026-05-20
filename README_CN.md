@@ -139,11 +139,15 @@ CSV 字段名已经使用中性命名(`focus_disease_*`、`cell_context`、
 ## 复合分
 
 ```
-composite = w1 · druggability      + w2 · disease_genetics + w3 · tractability
-          + w4 · tissue_specificity + w5 · cell_context_score
-          + w6 · expression         + w7 · novelty
-          - w8 · over_studied_penalty
+composite = 0.25 · druggability      + 0.20 · disease_genetics + 0.15 · tractability
+          + 0.10 · tissue_specificity + 0.10 · cell_context_score
+          + 0.10 · expression         + 0.10 · novelty
+          - 0.10 · over_studied_penalty
 ```
+
+各分量先裁剪到 `[0, 1]` 再加权;复合分汇总后在本批次内做 min-max 归一,
+再按四档分层(`Tier-1-priority` ≥ 0.75、`Tier-2-candidate` ≥ 0.50、
+`Tier-3-watchlist` ≥ 0.30、`Tier-4-deprioritized` < 0.30)。
 
 权重全部在 `weights.yaml` 里,跑命令时可 `--weights` 临时覆盖。改完权重重新打分仅 ~1s,不重新拉接口:
 
@@ -171,6 +175,7 @@ python3 ~/.claude/skills/target-prioritization/scripts/aggregate.py \
 | 单基因 UniProt 查询 | ✅ 通过 web | ✅ 批量、结构化 |
 | OpenTargets 药物 / 疾病关联 | ✅ 通过 web | ✅ schema 映射、聚焦疾病自动打标 |
 | PubMed 文献计数(含疾病场景) | ⚠ 慢、需手动反复查询 | ✅ 并行、去重 |
+| HPA 组织 / 单细胞表达 + 癌症 prognostic | ✅ 通过 web | ✅ 打标签、排名,并按 `FOCUS_CELL_TYPES` 入分 |
 | 复合分 + 分层 | ❌ | ✅ 权重可配置 |
 | 可复核审计快照 | ❌ | ✅ raw JSON 缓存 |
 | 不重新拉接口的重打分 | ❌ | ✅ ~1s |
