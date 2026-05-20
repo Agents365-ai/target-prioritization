@@ -15,11 +15,11 @@
 
 External references: [UniProt REST](https://www.uniprot.org/help/api) · [OpenTargets GraphQL](https://platform-docs.opentargets.org/data-access/graphql-api) · [PubMed E-utilities](https://www.ncbi.nlm.nih.gov/books/NBK25501/)
 
-A skill that turns a ranked gene list (typically a scRNA-seq DE output) into a per-gene drug-target dossier — fanning out parallel queries to UniProt, OpenTargets, and PubMed, scanning the local project for cross-lineage DE convergence, and re-ranking everything by a composite score combining protein biology, druggability, disease genetics, and research maturity.
+A skill that turns a ranked gene list (typically a scRNA-seq DE output) into a per-gene drug-target dossier — fanning out parallel queries to UniProt, OpenTargets, and PubMed, then re-ranking everything by a composite score combining protein biology, druggability, disease genetics, and research maturity.
 
-- **Multi-source evidence** — UniProt (localization, surface / secreted / MHC), OpenTargets (tractability, approved drugs, disease associations including GWAS-derived signal), PubMed (total + configurable disease-focus + cell-context paper counts), and a local DE scanner for cross-lineage convergence
+- **Multi-source evidence** — UniProt (localization, surface / secreted / MHC), OpenTargets (tractability, approved drugs, disease associations including GWAS-derived signal), PubMed (total + configurable disease-focus + cell-context paper counts)
 - **Parallel fetchers** — Python `ThreadPoolExecutor` dispatches all sources concurrently
-- **Composite re-ranking** — per-component scores (cross-lineage, druggability, disease genetics, tractability, expression, novelty) combined via fully configurable `weights.yaml`
+- **Composite re-ranking** — per-component scores (druggability, disease genetics, tractability, expression, novelty) combined via fully configurable `weights.yaml`
 - **No API keys, no external Python deps** — stdlib + curl-compatible network only
 - **Re-scorable** — raw JSON cache lets you tweak `weights.yaml` and rerun aggregate in seconds without re-fetching
 
@@ -37,10 +37,8 @@ scripts/orchestrate.py
         ├─► fetch_opentargets.py    → tractability, approved drugs, focus-disease
         │                              trial tags, associated diseases (integrates
         │                              GWAS evidence)
-        ├─► fetch_pubmed.py         → total + focus-disease + cell-context paper
-        │                              counts, maturity tag
-        └─► fetch_local_de.py       → cross-lineage DE in sibling project dirs
-                                       (hu_de_*, pert_de_*, cluster_degs*)
+        └─► fetch_pubmed.py         → total + focus-disease + cell-context paper
+                                       counts, maturity tag
         │
         ▼
 scripts/aggregate.py — composite score + tier assignment
@@ -78,9 +76,7 @@ Just describe what you want — the skill triggers on any DE-list triage request
 ```
 > Filter these candidate genes for druggable targets — TP53, EGFR, MYC, KRAS, BRCA1
 
-> Make a target dossier for the top 50 genes in
-  /path/to/de_output.csv  — cross-reference my project at /path/to/repo_root
-  for sibling DE files
+> Make a target dossier for the top 50 genes in /path/to/de_output.csv
 
 > Re-rank these with the druggability weight dialed up to 0.4
 ```
@@ -98,8 +94,7 @@ Or call the orchestrator directly:
 python3 ~/.claude/skills/target-prioritization/scripts/orchestrate.py \
     --input  /path/to/de_output.csv \
     --output /tmp/targets_run1 \
-    --top 50 \
-    --project-root /path/to/your_repo_root
+    --top 50
 ```
 
 After the run, ask Claude to fill in the rationale slots of `targets_report.md` using `prompts/rationale_template.md`.
@@ -110,12 +105,11 @@ After the run, ask Claude to fill in the rationale slots of `targets_report.md` 
 
 | Field group | Example columns |
 |---|---|
-| Score | `composite_score`, `tier`, plus per-component (`cross_lineage`, `druggability`, `disease_genetics`, `tractability`, `expression`, `novelty`, `over_studied_penalty`) |
+| Score | `composite_score`, `tier`, plus per-component (`druggability`, `disease_genetics`, `tractability`, `expression`, `novelty`, `over_studied_penalty`) |
 | UniProt | `uniprot_id`, `protein_name`, `subcellular_location`, `is_surface`, `is_secreted`, `is_mhc`, `has_transmembrane` |
 | OpenTargets | `approved_drug_count`, `highest_clinical_phase`, `any_focus_disease_drug`, `focus_disease_drugs`, `tractability_small_molecule`, `tractability_antibody` |
 | Disease genetics | `any_disease_assoc`, `is_focus_disease_associated`, `focus_disease_traits`, `max_focus_disease_assoc_score`, `max_disease_assoc_score` |
 | PubMed | `pubmed_total`, `pubmed_focus_disease`, `pubmed_cell_context`, `maturity_tag` |
-| Local DE | `n_supporting_de_files`, `supporting_de_files` |
 
 Tiers (after min-max rescaling): `Tier-1-priority` (≥0.75), `Tier-2-candidate` (≥0.50), `Tier-3-watchlist` (≥0.30), `Tier-4-deprioritized` (<0.30).
 
@@ -150,9 +144,9 @@ CSV columns are already neutrally named (`focus_disease_*`,
 ## Composite score
 
 ```
-composite = w1 · cross_lineage     + w2 · druggability  + w3 · disease_genetics
-          + w4 · tractability       + w5 · expression    + w6 · novelty
-          - w7 · over_studied_penalty
+composite = w1 · druggability      + w2 · disease_genetics + w3 · tractability
+          + w4 · expression         + w5 · novelty
+          - w6 · over_studied_penalty
 ```
 
 All weights live in `weights.yaml` and can be overridden per run with `--weights`. Re-scoring with new weights costs ~1s (no API re-fetch):
@@ -172,7 +166,6 @@ python3 ~/.claude/skills/target-prioritization/scripts/aggregate.py \
 | **UniProt REST** | Protein name, function summary, subcellular location, surface / secreted / MHC flags, transmembrane, signal peptide | 100 req/sec, batched via `accession` queries |
 | **OpenTargets GraphQL** | Ensembl ID, tractability (SM + Ab + Pr + OC), approved drugs, max clinical phase, focus-disease-tagged drugs, associated diseases (integrates GWAS Catalog + other genetics sources) | Generous, single endpoint |
 | **PubMed E-utilities** | Total paper count + two user-configurable context counts (`focus_disease`, `cell_context`) + maturity tag | 3 req/sec without API key |
-| **Local DE scan** | Cross-lineage convergence across `hu_de_*`, `pert_de_*`, `cluster_degs*` sibling outputs (with direction + p-value evidence per source) | File-system only, no network |
 
 ## Compared to native Claude Code
 
@@ -181,7 +174,6 @@ python3 ~/.claude/skills/target-prioritization/scripts/aggregate.py \
 | Look up UniProt for one gene | ✅ via web | ✅ batched + structured |
 | Look up OpenTargets drugs / disease assoc | ✅ via web | ✅ schema-mapped, focus-disease-tagged |
 | Count PubMed papers (+ disease context) | ⚠ slow, manual queries | ✅ parallel, deduped |
-| Cross-reference sibling DE files in a project | ❌ | ✅ auto-scan |
 | Composite re-ranking + tiering | ❌ | ✅ configurable weights |
 | Reproducible audit trail | ❌ | ✅ raw JSON cache |
 | Re-score without re-fetching | ❌ | ✅ ~1s rerun |
@@ -197,7 +189,6 @@ python3 ~/.claude/skills/target-prioritization/scripts/aggregate.py \
 
 | Skill | When to use |
 |---|---|
-| [single-cell-multiomics](https://github.com/Agents365-ai/single-cell-multiomics) | Producing the upstream DE CSVs in the first place |
 | [scholar-deep-research](https://github.com/Agents365-ai/scholar-deep-research) | If the rationale step needs deeper literature evidence per gene |
 | [paper-fetch](https://github.com/Agents365-ai/paper-fetch) | Pulling the full text of the focus-disease PMIDs surfaced by this skill |
 
